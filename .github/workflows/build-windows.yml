@@ -1,0 +1,56 @@
+name: Build VoteMGR (Windows)
+
+# Se déclenche à chaque push sur main, à chaque pull request,
+# et peut aussi être lancé manuellement depuis l'onglet Actions
+# (bouton "Run workflow").
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compiler avec PyInstaller
+        run: |
+          python -m PyInstaller --noconfirm --windowed --name VoteMGR --add-data "assets;assets" main.py
+
+      - name: Créer l'installateur (Inno Setup)
+        run: |
+          choco install innosetup -y
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\votemgr.iss
+        shell: pwsh
+        continue-on-error: true
+        # continue-on-error: si Inno Setup échoue (ex: pas encore de logo.png,
+        # ou script .iss modifié), on garde quand même le .exe brut ci-dessous.
+
+      - name: Publier le dossier compilé (VoteMGR.exe portable)
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoteMGR-portable-windows
+          path: dist/VoteMGR/
+
+      - name: Publier l'installateur (VoteMGR-Setup.exe), si créé
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoteMGR-Setup
+          path: installer/Output/*.exe
+          if-no-files-found: ignore
+
