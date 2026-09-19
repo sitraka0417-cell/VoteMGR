@@ -1,0 +1,16 @@
+Placez ici votre fichier "logo.png" (celui utilisé dans l'app Android).
+
+Chemin attendu : votemgr/assets/logo.png
+
+Ce logo s'affiche en grand sur l'écran de projection (écran 2) tant
+qu'aucun vote n'est en cours, avec le texte "VoteMGR by Sitraka
+Nambinintsoa" en dessous.
+
+Si aucun logo.png n'est présent, l'écran de projection affiche
+simplement le texte, sans planter.
+
+Conseils :
+- Format PNG, fond transparent de préférence.
+- Largeur idéale : entre 400 et 900 pixels (l'appli réduit
+  automatiquement les images plus grandes, mais ne les agrandit pas).
+
