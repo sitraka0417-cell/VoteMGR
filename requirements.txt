@@ -1,3 +1,0 @@
-# Dépendances pour exécuter VoteMGR en développement (python main.py)
-reportlab>=4.0
-pyinstaller>=6.0
