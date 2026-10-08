@@ -1,0 +1,96 @@
+{
+  "nom": "Assemblée Générale — Exemple",
+  "date_creation": "2026-09-19T10:40:26",
+  "sections": [
+    {
+      "id": "98bf93c8",
+      "nom": "Bureau exécutif",
+      "type": "section",
+      "nombre_sieges": 1,
+      "vote_lance": false,
+      "vote_termine": false,
+      "elus": [],
+      "egalite_en_attente": [],
+      "tour": 1,
+      "tour_precedent_id": null,
+      "candidats": [],
+      "enfants": [
+        {
+          "id": "4e713c35",
+          "nom": "Président",
+          "type": "poste",
+          "nombre_sieges": 1,
+          "vote_lance": false,
+          "vote_termine": false,
+          "elus": [],
+          "egalite_en_attente": [],
+          "tour": 1,
+          "tour_precedent_id": null,
+          "candidats": [
+            {
+              "id": "26921d5e",
+              "nom": "Rakoto Jean",
+              "numero": 1,
+              "votes": 0
+            },
+            {
+              "id": "959d9f35",
+              "nom": "Rabe Marie",
+              "numero": 2,
+              "votes": 0
+            },
+            {
+              "id": "15c6298e",
+              "nom": "Randria Paul",
+              "numero": 3,
+              "votes": 0
+            }
+          ],
+          "enfants": []
+        },
+        {
+          "id": "96337329",
+          "nom": "Vice-Président",
+          "type": "poste",
+          "nombre_sieges": 1,
+          "vote_lance": false,
+          "vote_termine": false,
+          "elus": [],
+          "egalite_en_attente": [],
+          "tour": 1,
+          "tour_precedent_id": null,
+          "candidats": [],
+          "enfants": []
+        },
+        {
+          "id": "edf52e37",
+          "nom": "Secrétaire",
+          "type": "poste",
+          "nombre_sieges": 1,
+          "vote_lance": false,
+          "vote_termine": false,
+          "elus": [],
+          "egalite_en_attente": [],
+          "tour": 1,
+          "tour_precedent_id": null,
+          "candidats": [],
+          "enfants": []
+        },
+        {
+          "id": "9816738e",
+          "nom": "Trésorier",
+          "type": "poste",
+          "nombre_sieges": 1,
+          "vote_lance": false,
+          "vote_termine": false,
+          "elus": [],
+          "egalite_en_attente": [],
+          "tour": 1,
+          "tour_precedent_id": null,
+          "candidats": [],
+          "enfants": []
+        }
+      ]
+    }
+  ]
+}
