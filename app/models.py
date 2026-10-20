@@ -62,6 +62,9 @@ class Noeud:
         self.egalite_en_attente = []    # ids à égalité, en attente de départage
         self.tour = 1                   # numéro de tour (1 = premier tour)
         self.tour_precedent_id = None   # id du poste dont ce poste est le tour suivant
+        self.tour_fusionne_id = None    # id du tour dont le résultat a déjà été fusionné ici
+        self.est_tour_fusionne = False  # True si ce tour a déjà été fusionné dans son poste d'origine
+        self.roles_resolus_manuels = {}  # {index_tranche: [cand_id, ...]} — tranches de rôles départagées manuellement
         self.majorite_absolue = False   # option : élu(e) seulement si >50% des voix
         self.majorite_non_atteinte = False  # vrai si majorité absolue demandée mais pas atteinte
         self.bulletins_nuls = 0
@@ -265,38 +268,94 @@ class Noeud:
             # les clairement-élus pour savoir où en est le départage global
             self.vote_termine = False
             return False
-        self.elus = [cand_id for cand_id, _role in affectation]
+        self.elus = [cand_id for cand_id, _role, _idx in affectation]
         self.vote_termine = True
         return True
 
     def resoudre_roles(self):
-        """Classe les candidats par score puis les attribue par tranches
-        aux rôles définis dans self.roles (dans l'ordre). Renvoie une liste
-        de tuples (candidat_id, nom_role), ou None si une tranche est à
-        égalité (il faut alors un départage avant de pouvoir conclure)."""
+        """Classe les candidats par score puis les attribue PAR TRANCHES
+        (rang) aux rôles définis dans self.roles (dans l'ordre : la
+        tranche 1 reçoit les meilleur·es scores restant·es, la tranche 2
+        les suivant·es, etc.). Renvoie une liste de tuples
+        (candidat_id, nom_role, index_tranche), ou None si une tranche est
+        à égalité ET n'a pas encore été départagée manuellement (voir
+        self.roles_resolus_manuels / tranche_a_departager)."""
         if not self.roles:
             return None
         classement = self.classement()
         resultat = []
         index = 0
-        for role in self.roles:
+        for i, role in enumerate(self.roles):
             n = role.get("nombre", 0)
             dispo = classement[index:]
             if n <= 0 or not dispo:
                 continue
             if n > len(dispo):
                 n = len(dispo)
+            resolu_manuel = self.roles_resolus_manuels.get(i)
+            if resolu_manuel:
+                retenus = [c for c in (self.candidat(cid) for cid in resolu_manuel) if c][:n]
+            else:
+                seuil = dispo[n - 1].votes
+                surs = [c for c in dispo if c.votes > seuil]
+                a_departager = [c for c in dispo if c.votes == seuil]
+                places_restantes = n - len(surs)
+                if places_restantes > 0 and len(a_departager) > places_restantes:
+                    return None  # égalité non tranchée sur cette tranche
+                retenus = surs + a_departager[:places_restantes] if places_restantes > 0 else surs
+            for c in retenus:
+                resultat.append((c.id, role.get("nom", ""), i))
+            index += len(retenus)
+        return resultat
+
+    def tranche_a_departager(self):
+        """Renvoie (index_tranche, nom_role, [candidats à égalité],
+        places_restantes_dans_la_tranche) pour la PREMIÈRE tranche de rôles
+        à égalité non résolue, ou None si tout est déjà tranché."""
+        if not self.roles:
+            return None
+        classement = self.classement()
+        index = 0
+        for i, role in enumerate(self.roles):
+            n = role.get("nombre", 0)
+            dispo = classement[index:]
+            if n <= 0 or not dispo:
+                continue
+            if n > len(dispo):
+                n = len(dispo)
+            resolu_manuel = self.roles_resolus_manuels.get(i)
+            if resolu_manuel:
+                retenus = [c for c in (self.candidat(cid) for cid in resolu_manuel) if c][:n]
+                index += len(retenus)
+                continue
             seuil = dispo[n - 1].votes
             surs = [c for c in dispo if c.votes > seuil]
             a_departager = [c for c in dispo if c.votes == seuil]
             places_restantes = n - len(surs)
             if places_restantes > 0 and len(a_departager) > places_restantes:
-                return None  # égalité non tranchée sur cette tranche
-            retenus = surs + a_departager[:places_restantes] if places_restantes > 0 else surs
-            for c in retenus:
-                resultat.append((c.id, role.get("nom", "")))
+                return (i, role.get("nom", ""), a_departager, places_restantes)
+            retenus = surs + (a_departager[:places_restantes] if places_restantes > 0 else [])
             index += len(retenus)
-        return resultat
+        return None
+
+    def resultat_roles_groupe(self):
+        """Comme resoudre_roles(), mais regroupé par rôle pour l'affichage :
+        renvoie une liste de dicts {"nom_role": str, "candidats": [Candidat]}
+        dans l'ordre des rôles, ou None si une tranche reste à départager."""
+        affectation = self.resoudre_roles()
+        if affectation is None:
+            return None
+        groupes = []
+        par_index = {}
+        for cand_id, nom_role, idx in affectation:
+            c = self.candidat(cand_id)
+            if not c:
+                continue
+            if idx not in par_index:
+                par_index[idx] = {"nom_role": nom_role, "candidats": []}
+                groupes.append(par_index[idx])
+            par_index[idx]["candidats"].append(c)
+        return groupes
 
     def designer_sans_vote(self, cand_ids):
         """Désigne directement un ou plusieurs candidats à ce poste, sans
@@ -345,6 +404,49 @@ class Noeud:
         places = nombre_sieges if nombre_sieges else max(1, self.nombre_sieges - len(self.elus))
         return self._nouveau_tour(cands, places, "2e tour (choix manuel)")
 
+    def creer_tour_departage_tranche(self, candidats, places_restantes, nom_role):
+        """Comme creer_tour_departage, mais pour UNE tranche du mode
+        rôles (ex: départager le rang « Mpanampy » uniquement)."""
+        return self._nouveau_tour(candidats, places_restantes,
+                                   "départage — %s" % nom_role)
+
+    def fusionner_resultat_tour(self, tour):
+        """Fusionne le résultat d'un tour de départage/second tour (déjà
+        terminé) dans CE poste d'origine, par correspondance de nom (le
+        tour contient des copies de candidats avec de nouveaux ids). Le
+        poste d'origine devient alors « vote_termine=True » avec TOUS les
+        élus (ceux d'avant le départage + ceux du départage), comme dans
+        l'app Android où le résultat final est toujours fusionné."""
+        noms_elus_tour = [tour.candidat(cid).nom for cid in tour.elus if tour.candidat(cid)]
+        deja = set(self.elus)
+        for nom in noms_elus_tour:
+            c = next((c for c in self.candidats if c.nom == nom), None)
+            if c and c.id not in deja:
+                self.elus.append(c.id)
+                deja.add(c.id)
+        self.egalite_en_attente = []
+        self.vote_termine = True
+        self.majorite_non_atteinte = False
+        self.tour_fusionne_id = tour.id
+        tour.est_tour_fusionne = True
+
+    def fusionner_resultat_tour_tranche(self, tour, index_tranche):
+        """Comme fusionner_resultat_tour, mais pour une tranche du mode
+        rôles : enregistre l'ordre des gagnants de ce tour comme résolution
+        manuelle de la tranche concernée, pour que resoudre_roles() les
+        utilise directement à partir de maintenant."""
+        noms_elus_tour = [tour.candidat(cid).nom for cid in tour.elus if tour.candidat(cid)]
+        ids = []
+        for nom in noms_elus_tour:
+            c = next((c for c in self.candidats if c.nom == nom), None)
+            if c:
+                ids.append(c.id)
+        self.roles_resolus_manuels[index_tranche] = ids
+        self.tour_fusionne_id = tour.id
+        tour.est_tour_fusionne = True
+        # retente de conclure le vote maintenant que la tranche est tranchée
+        return self.terminer_vote()
+
     def _nouveau_tour(self, candidats_source, nombre_sieges, libelle):
         tour = Noeud(self.nom + " — " + libelle, type_="poste",
                      nombre_sieges=max(1, nombre_sieges))
@@ -368,6 +470,9 @@ class Noeud:
             "egalite_en_attente": self.egalite_en_attente,
             "tour": self.tour,
             "tour_precedent_id": self.tour_precedent_id,
+            "tour_fusionne_id": self.tour_fusionne_id,
+            "est_tour_fusionne": self.est_tour_fusionne,
+            "roles_resolus_manuels": self.roles_resolus_manuels,
             "majorite_absolue": self.majorite_absolue,
             "majorite_non_atteinte": self.majorite_non_atteinte,
             "bulletins_nuls": self.bulletins_nuls,
@@ -390,6 +495,9 @@ class Noeud:
         n.egalite_en_attente = d.get("egalite_en_attente", [])
         n.tour = d.get("tour", 1)
         n.tour_precedent_id = d.get("tour_precedent_id")
+        n.tour_fusionne_id = d.get("tour_fusionne_id")
+        n.est_tour_fusionne = d.get("est_tour_fusionne", False)
+        n.roles_resolus_manuels = {int(k): v for k, v in d.get("roles_resolus_manuels", {}).items()}
         n.majorite_absolue = d.get("majorite_absolue", False)
         n.majorite_non_atteinte = d.get("majorite_non_atteinte", False)
         n.bulletins_nuls = d.get("bulletins_nuls", 0)
@@ -492,7 +600,7 @@ class Projet:
         où on choisit un candidat (comme calculerElusGlobal() côté
         Android)."""
         resultat = {}
-        for poste in self.tous_les_postes():
+        for poste in self.postes_resultat():
             if not (poste.vote_termine and poste.elus):
                 continue
             for cid in poste.elus:
@@ -502,6 +610,47 @@ class Projet:
                 cle = c.nom.strip().lower()
                 resultat.setdefault(cle, []).append(poste.nom)
         return resultat
+
+    def chemin(self, node_id):
+        """Renvoie la liste des Noeud de la racine jusqu'à node_id inclus
+        (ex : [section, sous_section, poste]), ou None si introuvable."""
+        def chercher(n, trail):
+            trail = trail + [n]
+            if n.id == node_id:
+                return trail
+            for e in n.enfants:
+                r = chercher(e, trail)
+                if r:
+                    return r
+            return None
+        for s in self.sections:
+            r = chercher(s, [])
+            if r:
+                return r
+        return None
+
+    def titre_section(self, noeud):
+        """(titre, sous_titre) pour l'affichage/export : le titre est
+        toujours le nom de la SECTION racine, le sous-titre celui de la
+        sous-section intermédiaire s'il y en a une (hiérarchie à 3 niveaux
+        maximum, comme dans l'app Android)."""
+        chemin = self.chemin(noeud.id) or [noeud]
+        titre = chemin[0].nom
+        sous_titre = chemin[1].nom if len(chemin) > 2 else None
+        return titre, sous_titre
+
+    def postes_resultat(self, racine=None):
+        """Postes à afficher pour un résultat FINAL (projection, export
+        'élus uniquement') : tous les postes votables du sous-arbre, sauf
+        les tours de départage déjà fusionnés dans leur poste d'origine
+        (ils restent visibles seulement dans le déroulement complet)."""
+        depart = [racine] if racine is not None else self.sections
+        postes = []
+        for n in depart:
+            for p in n.parcourir_postes():
+                if not p.est_tour_fusionne:
+                    postes.append(p)
+        return postes
 
     # ---------- sessions / présence ----------
     def ajouter_session(self, label, presents=None):

@@ -16,28 +16,38 @@ def _styles():
     base = getSampleStyleSheet()
     base.add(ParagraphStyle(name="TitreProjet", parent=base["Title"],
                              fontSize=20, spaceAfter=6))
+    base.add(ParagraphStyle(name="TitreSection", parent=base["Heading1"],
+                             fontSize=17, spaceBefore=16, spaceAfter=2,
+                             textColor=colors.HexColor("#1a3c6e")))
+    base.add(ParagraphStyle(name="SousTitreSection", parent=base["Heading2"],
+                             fontSize=13, spaceBefore=0, spaceAfter=6,
+                             textColor=colors.HexColor("#4a6fa5")))
     base.add(ParagraphStyle(name="TitrePoste", parent=base["Heading2"],
                              fontSize=14, spaceBefore=14, spaceAfter=6,
                              textColor=colors.HexColor("#1a3c6e")))
+    base.add(ParagraphStyle(name="NomRole", parent=base["Heading3"],
+                             fontSize=12, spaceBefore=8, spaceAfter=2,
+                             textColor=colors.HexColor("#4a6fa5")))
     return base
 
 
 def _tableau_poste_elus_seulement(poste, styles):
     """Version compacte : uniquement le(s) nom(s) élu(s)/désigné(s), sans
-    le détail des voix — pour l'export 'Candidats élus uniquement'."""
+    le détail des voix — pour l'export 'Candidats élus uniquement'. Un nom
+    par ligne (jamais séparés par des virgules)."""
     elements = [Paragraph(poste.nom, styles["TitrePoste"])]
     if poste.est_designation:
         noms = [poste.candidat(cid).nom for cid in poste.designes if poste.candidat(cid)]
         elements.append(Paragraph("Désigné(e)(s) sans vote :", styles["Normal"]))
     elif poste.mode_roles and poste.roles:
-        affectation = poste.resoudre_roles()
-        if affectation is None:
+        groupes = poste.resultat_roles_groupe()
+        if groupes is None:
             elements.append(Paragraph("⚠ Égalité non départagée.", styles["Normal"]))
             return elements
-        for cand_id, nom_role in affectation:
-            c = poste.candidat(cand_id)
-            if c:
-                elements.append(Paragraph("✓ %s — %s" % (c.nom, nom_role), styles["Normal"]))
+        for g in groupes:
+            elements.append(Paragraph(g["nom_role"], styles["NomRole"]))
+            for c in g["candidats"]:
+                elements.append(Paragraph("✓ " + c.nom, styles["Normal"]))
         return elements
     elif not poste.vote_termine:
         elements.append(Paragraph("— Vote non terminé —", styles["Normal"]))
@@ -57,8 +67,11 @@ def _tableau_poste(poste, styles):
 
     if poste.est_designation:
         elements.append(Paragraph("Désigné(e)(s) sans vote :", styles["Normal"]))
-        noms = ", ".join(poste.candidat(cid).nom for cid in poste.designes if poste.candidat(cid))
-        elements.append(Paragraph(noms or "—", styles["Normal"]))
+        noms = [poste.candidat(cid).nom for cid in poste.designes if poste.candidat(cid)]
+        if not noms:
+            elements.append(Paragraph("—", styles["Normal"]))
+        for nom in noms:
+            elements.append(Paragraph("✓ " + nom, styles["Normal"]))
         return elements
 
     if poste.mode_roles and poste.roles:
@@ -66,14 +79,14 @@ def _tableau_poste(poste, styles):
             "Mode postes multiples : " +
             ", ".join("%s (%d)" % (r["nom"], r["nombre"]) for r in poste.roles),
             styles["Normal"]))
-        affectation = poste.resoudre_roles()
-        if affectation is None:
+        groupes = poste.resultat_roles_groupe()
+        if groupes is None:
             elements.append(Paragraph("⚠ Égalité non départagée.", styles["Normal"]))
         else:
-            for cand_id, nom_role in affectation:
-                c = poste.candidat(cand_id)
-                if c:
-                    elements.append(Paragraph("✓ %s — %s" % (c.nom, nom_role), styles["Normal"]))
+            for g in groupes:
+                elements.append(Paragraph(g["nom_role"], styles["NomRole"]))
+                for c in g["candidats"]:
+                    elements.append(Paragraph("✓ " + c.nom, styles["Normal"]))
         return elements
 
     if poste.nombre_sieges > 1:
@@ -148,25 +161,44 @@ def exporter_pdf(chemin, projet, postes=None, mode="deroulement"):
         styles["Normal"]))
     story.append(Spacer(1, 10))
 
-    liste = postes if postes is not None else projet.tous_les_postes()
+    if postes is not None:
+        liste = postes
+    elif mode == "elus":
+        # élus uniquement : jamais un tour de départage affiché à part,
+        # toujours le résultat final fusionné dans le poste d'origine.
+        liste = projet.postes_resultat()
+    else:
+        # déroulement complet : on garde aussi les tours de départage, pour
+        # la traçabilité complète du processus.
+        liste = projet.tous_les_postes()
+
     if not liste:
         story.append(Paragraph("Aucun poste dans ce projet.", styles["Normal"]))
+
+    dernier_titre, dernier_sous_titre = None, None
     for poste in liste:
+        titre, sous_titre = projet.titre_section(poste)
+        if titre != dernier_titre:
+            story.append(Paragraph(titre, styles["TitreSection"]))
+            dernier_titre, dernier_sous_titre = titre, None
+        if sous_titre and sous_titre != dernier_sous_titre:
+            story.append(Paragraph(sous_titre, styles["SousTitreSection"]))
+            dernier_sous_titre = sous_titre
         if mode == "elus":
             story.extend(_tableau_poste_elus_seulement(poste, styles))
         else:
             story.extend(_tableau_poste(poste, styles))
 
     # page récapitulative des élus (bureau exécutif complet)
-    tous = postes if postes is not None else projet.tous_les_postes()
+    tous = postes if postes is not None else projet.postes_resultat()
     postes_avec_elus = [p for p in tous if p.vote_termine and p.elus]
     if postes_avec_elus and mode != "elus":
         story.append(PageBreak())
         story.append(Paragraph("Récapitulatif du bureau élu", styles["TitreProjet"]))
         data = [["Poste", "Élu(e)(s)"]]
         for p in postes_avec_elus:
-            noms = ", ".join(p.candidat(cid).nom for cid in p.elus if p.candidat(cid))
-            data.append([p.nom, noms])
+            noms = "<br/>".join(p.candidat(cid).nom for cid in p.elus if p.candidat(cid))
+            data.append([p.nom, Paragraph(noms, styles["Normal"])])
         table = Table(data, colWidths=[6 * cm, 9 * cm])
         table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a3c6e")),

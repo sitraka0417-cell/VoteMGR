@@ -282,6 +282,51 @@ et les fichiers compilés — seul le code source part sur GitHub. Pensez à
 créer une **Release** GitHub et à y attacher `VoteMGR-Setup.exe` (généré
 en local, pas à commiter directement : il est assez lourd).
 
+## Corrections — vague « Fanatsarana » (fidélité maquette + bugs de fond)
+
+- **Écran de projection (vote)** : refonte complète en barres horizontales
+  (numéro + nom à gauche, score dans un badge rond à droite), conforme à
+  la maquette fournie — colonnes/lignes désormais adaptatives jusqu'à
+  200+ candidats sur un seul écran.
+- **Mise en couleur des candidats en tête** : corrigée — seuls les
+  candidats ayant réellement des voix, et réellement dans les N premiers
+  (N = nombre de sièges), sont mis en avant en vert ; une 3e couleur
+  (orange) signale une égalité à la limite du seuil qualificatif.
+- **Clignotement au vote** : rendu quasi instantané (apparaît dès l'appui,
+  dure une fraction de seconde), au lieu du clignotement long/retardé
+  précédent.
+- **Écran idle (hors vote)** : fond forcé en BLANC quel que soit le thème
+  choisi, logo agrandi en quasi plein écran (petite marge seulement).
+- **Projection des résultats** : ne projette plus que la section/
+  sous-section sélectionnée (jamais tout le projet), avec le nom de la
+  section en grand titre et la sous-section en sous-titre ; les tours de
+  départage ne s'affichent plus séparément — le résultat final est
+  toujours fusionné (ex : un élu avant départage + le gagnant du
+  départage apparaissent ensemble).
+- **Bug de fusion départage** : corrigé à la racine (`Noeud.
+  fusionner_resultat_tour`) — un poste dont une partie des élu(e)s a été
+  décidée avant un départage, et l'autre partie pendant, n'apparaît plus
+  comme « vote non terminé » dans le PDF/la projection.
+- **Mode « postes multiples » (rôles)** : les résultats s'affichent
+  maintenant regroupés par rang/poste (« Filoha… Mpanampy… Mambra… »), et
+  une égalité sur UNE tranche peut être départagée indépendamment
+  (bouton dédié), sans bloquer les tranches déjà tranchées.
+- **Désigner sans vote** : cases à cocher (plus une Listbox), avec barre
+  de recherche et « Tout sélectionner », comme pour l'ajout depuis la
+  liste des membres.
+- **Export PDF** : les noms (désignations, récapitulatif) sont listés un
+  par ligne (jamais séparés par des virgules) ; chaque bloc affiche
+  désormais le nom de la section en titre et la sous-section en
+  sous-titre, comme à l'écran.
+- **Écran secrétaire pendant un vote actif** : la liste des candidats
+  passe en plusieurs colonnes dès qu'il y en a plus de 8, pour limiter le
+  défilement pendant le dépouillement.
+- **Égalité** : un bandeau rouge clignotant signale désormais une égalité
+  à départager directement dans le panneau du poste (en plus du message
+  et du bouton existants).
+- **Tutoriel intégré** : nouveau bouton « 🎓 Tuto » (et menu Aide) qui
+  explique toutes les étapes d'utilisation sans quitter l'application.
+
 ## Suggestions pour améliorer l'idée (au-delà de ce qui est déjà inclus)
 
 - **Deux moniteurs non détectés** : sur certains PC/projecteurs (mode

@@ -239,6 +239,7 @@ class SecretaryApp(tk.Tk):
         self.bouton_annuler_barre.config(text=self.t("bouton_annuler_ctrlz"))
         self.bouton_theme.config(text=self.t("theme_sombre") if self.theme == "clair" else self.t("theme_clair"))
         self.bouton_langue.config(text=self.t("langue_bouton"))
+        self.bouton_tuto.config(text="🎓 Tuto" if self.lang == "fr" else "🎓 Tutorial")
         self.bouton_section.config(text=self.t("bouton_section"))
         self.bouton_sous_section.config(text=self.t("bouton_sous_section"))
         self.bouton_renommer.config(text=self.t("bouton_renommer"))
@@ -298,6 +299,9 @@ class SecretaryApp(tk.Tk):
         barre.add_cascade(label=t("menu_ecran"), menu=m_ecran)
 
         m_aide = tk.Menu(barre, tearoff=0)
+        m_aide.add_command(label=("🎓 Tutoriel — comment utiliser VoteMGR" if self.lang == "fr"
+                                   else "🎓 Tutorial — how to use VoteMGR"),
+                            command=self._afficher_tuto)
         m_aide.add_command(label=t("menu_a_propos"), command=self._a_propos)
         barre.add_cascade(label=t("menu_aide"), menu=m_aide)
 
@@ -328,6 +332,10 @@ class SecretaryApp(tk.Tk):
         self.bouton_langue = ttk.Button(barre_recherche, text=self.t("langue_bouton"),
                                          command=self._basculer_langue)
         self.bouton_langue.pack(side="right", padx=(6, 0))
+        self.bouton_tuto = ttk.Button(barre_recherche,
+                                       text="🎓 Tuto" if self.lang == "fr" else "🎓 Tutorial",
+                                       command=self._afficher_tuto)
+        self.bouton_tuto.pack(side="right", padx=(6, 0))
 
         # ---- zone principale : arbre + panneau ----
         principal = ttk.Panedwindow(self, orient="horizontal")
@@ -677,6 +685,14 @@ class SecretaryApp(tk.Tk):
         if statut in ("ouvert", "ferme"):
             ttk.Button(actions_vote, text=self.t("projeter_poste"),
                        command=lambda: self._projeter_poste(noeud)).pack(side="left", padx=(0, 6))
+        # Si ce noeud a des sous-sections (avec ou sans vote direct
+        # lui-même), on propose aussi de projeter/clôturer les résultats
+        # de TOUTE la section d'un coup (fusionnés, hiérarchie incluse).
+        if noeud.enfants and any(pp.vote_termine for pp in noeud.parcourir_postes()):
+            ttk.Button(actions_vote, text=("📽 Projeter les résultats de la section"
+                                            if self.lang == "fr" else
+                                            "📽 Project the section's results"),
+                       command=lambda: self._projeter_resultats(noeud)).pack(side="left", padx=(0, 6))
         if statut == "ferme":
             ttk.Button(actions_vote, text=self.t("projeter_resultats"),
                        command=lambda: self._projeter_resultats(noeud)).pack(side="left", padx=(0, 6))
@@ -686,12 +702,28 @@ class SecretaryApp(tk.Tk):
         if noeud.egalite_en_attente:
             ttk.Button(actions_vote, text=self.t("creer_departage"),
                        command=lambda: self._creer_departage(noeud)).pack(side="left", padx=(0, 6))
+        tranche_a_dep = noeud.tranche_a_departager() if (noeud.mode_roles and noeud.roles) else None
+        if tranche_a_dep:
+            idx_tr, nom_role_tr, cands_tr, places_tr = tranche_a_dep
+            ttk.Button(actions_vote, text=("Départager « %s »" if self.lang == "fr"
+                                            else "Tie-break “%s”") % nom_role_tr,
+                       command=lambda: self._departager_tranche_roles(
+                           noeud, idx_tr, nom_role_tr, cands_tr, places_tr)).pack(side="left", padx=(0, 6))
         if noeud.majorite_non_atteinte:
             ttk.Button(actions_vote, text=self.t("creer_tour_majorite"),
                        command=lambda: self._creer_tour_majorite(noeud)).pack(side="left", padx=(0, 6))
         if statut == "ferme" and noeud.candidats and len(noeud.candidats) >= 2:
             ttk.Button(actions_vote, text=self.t("second_tour_manuel"),
                        command=lambda: self._creer_tour_manuel(noeud)).pack(side="left", padx=(0, 6))
+
+        if noeud.egalite_en_attente or tranche_a_dep:
+            lbl_egalite = tk.Label(
+                p, text=("⚠ ÉGALITÉ — départage nécessaire !" if self.lang == "fr"
+                          else "⚠ TIE — a tie-break is needed!"),
+                font=("Segoe UI", 12, "bold"), fg="#e53935",
+                bg=couleurs["bg"])
+            lbl_egalite.pack(anchor="w", pady=(0, 6))
+            self._clignoter_label(lbl_egalite)
 
         if noeud.vote_lance:
             ttk.Label(p, text=self.t("astuce_clavier"),
@@ -743,32 +775,64 @@ class SecretaryApp(tk.Tk):
             canvas.pack(side="left", fill="both", expand=True)
             scrollbar.pack(side="right", fill="y")
 
-            entetes = ttk.Frame(conteneur)
-            entetes.pack(fill="x", pady=(0, 4))
-            for texte, larg in ((self.t("colonne_numero"), 4), (self.t("colonne_candidat"), 44),
-                                 (self.t("colonne_voix"), 6), ("", 14)):
-                ttk.Label(entetes, text=texte, width=larg, font=("Segoe UI", 9, "bold")).pack(side="left")
+            n_cand = len(noeud.candidats)
 
-            for c in noeud.classement():
-                ligne = ttk.Frame(conteneur)
-                ligne.pack(fill="x", pady=2)
-                est_elu_ici = c.id in noeud.elus
-                marque = " 🏷" if (est_elu_ici and noeud.est_designation) else (" 🏅" if est_elu_ici else "")
-                badge = self._badge_elu(c.nom, poste_a_exclure=noeud.nom) if not est_elu_ici else ""
-                ttk.Label(ligne, text=str(c.numero), width=4).pack(side="left")
-                ttk.Label(ligne, text=c.nom + marque + badge, width=44).pack(side="left")
-                var_score = tk.StringVar(value=str(c.votes))
-                lbl_score = ttk.Label(ligne, textvariable=var_score, width=6)
-                lbl_score.pack(side="left")
+            if noeud.vote_lance and n_cand > 1:
+                # Pendant un vote actif : disposition en COLONNES, pour que
+                # tous les candidats soient visibles ensemble sans avoir à
+                # scroller pendant le dépouillement (plus le nombre de
+                # candidats augmente, plus il y a de colonnes).
+                n_colonnes = 1 if n_cand <= 8 else 2 if n_cand <= 20 else 3 if n_cand <= 40 else 4
+                grille = ttk.Frame(conteneur)
+                grille.pack(fill="both", expand=True)
+                for col in range(n_colonnes):
+                    grille.columnconfigure(col, weight=1)
 
-                if noeud.vote_lance:
-                    ttk.Button(ligne, text="－", width=3,
+                for i, c in enumerate(noeud.classement()):
+                    ligne_idx, col_idx = divmod(i, n_colonnes)
+                    est_elu_ici = c.id in noeud.elus
+                    marque = " 🏷" if (est_elu_ici and noeud.est_designation) else (" 🏅" if est_elu_ici else "")
+                    badge = self._badge_elu(c.nom, poste_a_exclure=noeud.nom) if not est_elu_ici else ""
+                    carte = ttk.Frame(grille, relief="groove", borderwidth=1, padding=4)
+                    carte.grid(row=ligne_idx, column=col_idx, sticky="nsew", padx=3, pady=3)
+                    ttk.Label(carte, text="N°%d  %s" % (c.numero, c.nom + marque + badge),
+                              wraplength=180, justify="left", font=("Segoe UI", 9)).pack(anchor="w")
+                    ligne_boutons = ttk.Frame(carte)
+                    ligne_boutons.pack(anchor="w", pady=(2, 0))
+                    var_score = tk.StringVar(value=str(c.votes))
+                    ttk.Button(ligne_boutons, text="－", width=3,
                                command=lambda cid=c.id, v=var_score: self._voter(noeud, cid, -1, v)).pack(side="left")
-                    ttk.Button(ligne, text="＋", width=3,
-                               command=lambda cid=c.id, v=var_score: self._voter(noeud, cid, 1, v)).pack(side="left", padx=(4, 10))
-                if statut == "attente":
-                    ttk.Button(ligne, text=self.t("retirer"), width=8,
-                               command=lambda cid=c.id: self._retirer_candidat(noeud, cid)).pack(side="left", padx=(10, 0))
+                    ttk.Label(ligne_boutons, textvariable=var_score, width=4,
+                              font=("Segoe UI", 10, "bold"), anchor="center").pack(side="left", padx=4)
+                    ttk.Button(ligne_boutons, text="＋", width=3,
+                               command=lambda cid=c.id, v=var_score: self._voter(noeud, cid, 1, v)).pack(side="left")
+            else:
+                entetes = ttk.Frame(conteneur)
+                entetes.pack(fill="x", pady=(0, 4))
+                for texte, larg in ((self.t("colonne_numero"), 4), (self.t("colonne_candidat"), 44),
+                                     (self.t("colonne_voix"), 6), ("", 14)):
+                    ttk.Label(entetes, text=texte, width=larg, font=("Segoe UI", 9, "bold")).pack(side="left")
+
+                for c in noeud.classement():
+                    ligne = ttk.Frame(conteneur)
+                    ligne.pack(fill="x", pady=2)
+                    est_elu_ici = c.id in noeud.elus
+                    marque = " 🏷" if (est_elu_ici and noeud.est_designation) else (" 🏅" if est_elu_ici else "")
+                    badge = self._badge_elu(c.nom, poste_a_exclure=noeud.nom) if not est_elu_ici else ""
+                    ttk.Label(ligne, text=str(c.numero), width=4).pack(side="left")
+                    ttk.Label(ligne, text=c.nom + marque + badge, width=44).pack(side="left")
+                    var_score = tk.StringVar(value=str(c.votes))
+                    lbl_score = ttk.Label(ligne, textvariable=var_score, width=6)
+                    lbl_score.pack(side="left")
+
+                    if noeud.vote_lance:
+                        ttk.Button(ligne, text="－", width=3,
+                                   command=lambda cid=c.id, v=var_score: self._voter(noeud, cid, -1, v)).pack(side="left")
+                        ttk.Button(ligne, text="＋", width=3,
+                                   command=lambda cid=c.id, v=var_score: self._voter(noeud, cid, 1, v)).pack(side="left", padx=(4, 10))
+                    if statut == "attente":
+                        ttk.Button(ligne, text=self.t("retirer"), width=8,
+                                   command=lambda cid=c.id: self._retirer_candidat(noeud, cid)).pack(side="left", padx=(10, 0))
 
             if not noeud.candidats:
                 ttk.Label(conteneur, text=self.t("aucun_candidat")).pack(anchor="w", pady=10)
@@ -831,6 +895,14 @@ class SecretaryApp(tk.Tk):
 
         deja = {c.nom.strip().lower() for c in noeud.candidats}
 
+        # ---- barre de recherche + "Sélectionner tout" ----
+        ligne_recherche = ttk.Frame(cadre)
+        ligne_recherche.pack(fill="x", pady=(0, 6))
+        ttk.Label(ligne_recherche, text="🔎").pack(side="left")
+        var_recherche = tk.StringVar()
+        ttk.Entry(ligne_recherche, textvariable=var_recherche).pack(side="left", fill="x", expand=True, padx=(4, 10))
+        var_tout = tk.BooleanVar(value=False)
+
         # zone défilante de cases à cocher (utile si la liste est longue)
         cadre_scroll = ttk.Frame(cadre)
         cadre_scroll.pack(fill="both", expand=True)
@@ -863,11 +935,35 @@ class SecretaryApp(tk.Tk):
             chk.pack(anchor="w", pady=1)
             if deja_present:
                 var.set(True)
-            variables.append((nom, var, deja_present))
+            variables.append((nom, var, deja_present, chk))
+
+        def filtrer(*_a):
+            texte = var_recherche.get().strip().lower()
+            for nom, var, deja_present, chk in variables:
+                if texte and texte not in nom.lower():
+                    chk.pack_forget()
+                else:
+                    chk.pack(anchor="w", pady=1)
+            canvas.update_idletasks()
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        var_recherche.trace_add("write", filtrer)
+
+        def tout_cocher():
+            etat = var_tout.get()
+            texte = var_recherche.get().strip().lower()
+            for nom, var, deja_present, chk in variables:
+                if deja_present:
+                    continue
+                if texte and texte not in nom.lower():
+                    continue
+                var.set(etat)
+        ttk.Checkbutton(ligne_recherche,
+                        text="Tout sélectionner" if self.lang == "fr" else "Select all",
+                        variable=var_tout, command=tout_cocher).pack(side="left")
 
         def ajouter_selection():
             ajoutes = 0
-            for nom, var, deja_present in variables:
+            for nom, var, deja_present, chk in variables:
                 if var.get() and not deja_present:
                     noeud.ajouter_candidat(nom)
                     ajoutes += 1
@@ -951,30 +1047,83 @@ class SecretaryApp(tk.Tk):
             return
         g = self.projet.calculer_elus_global()
 
+        couleurs = THEMES[self.theme]
         fenetre = tk.Toplevel(self)
         fenetre.title("Désigner sans vote — %s" % noeud.nom)
-        fenetre.geometry("460x480")
+        fenetre.geometry("460x520")
         fenetre.transient(self)
         fenetre.grab_set()
+        fenetre.configure(bg=couleurs["bg"])
 
         cadre = ttk.Frame(fenetre, padding=12)
         cadre.pack(fill="both", expand=True)
-        ttk.Label(cadre, text="Choisissez directement la ou les personnes à nommer "
+        ttk.Label(cadre, text="Cochez directement la ou les personnes à nommer "
                                "à « %s », sans organiser de vote :" % noeud.nom,
                   wraplength=420, justify="left").pack(anchor="w", pady=(0, 8))
 
-        liste = tk.Listbox(cadre, selectmode="extended")
-        liste.pack(fill="both", expand=True)
+        ligne_recherche = ttk.Frame(cadre)
+        ligne_recherche.pack(fill="x", pady=(0, 6))
+        ttk.Label(ligne_recherche, text="🔎").pack(side="left")
+        var_recherche = tk.StringVar()
+        ttk.Entry(ligne_recherche, textvariable=var_recherche).pack(side="left", fill="x", expand=True, padx=(4, 10))
+        var_tout = tk.BooleanVar(value=False)
+
+        cadre_scroll = ttk.Frame(cadre)
+        cadre_scroll.pack(fill="both", expand=True)
+        canvas = tk.Canvas(cadre_scroll, highlightthickness=0, bg=couleurs["bg_arbre"])
+        scrollbar = ttk.Scrollbar(cadre_scroll, orient="vertical", command=canvas.yview)
+        conteneur = ttk.Frame(canvas)
+        conteneur.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=conteneur, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        def _molette(event):
+            delta = -1 * (event.delta // 120) if event.delta else (-1 if event.num == 4 else 1)
+            canvas.yview_scroll(int(delta), "units")
+        canvas.bind("<Enter>", lambda e: (canvas.bind_all("<MouseWheel>", _molette),
+                                           canvas.bind_all("<Button-4>", _molette),
+                                           canvas.bind_all("<Button-5>", _molette)))
+        canvas.bind("<Leave>", lambda e: (canvas.unbind_all("<MouseWheel>"),
+                                           canvas.unbind_all("<Button-4>"),
+                                           canvas.unbind_all("<Button-5>")))
+
+        variables = []
         for c in noeud.candidats:
             badge = self._badge_elu(c.nom)
-            liste.insert("end", c.nom + badge)
+            var = tk.BooleanVar(value=(c.id in noeud.designes))
+            chk = ttk.Checkbutton(conteneur, text=c.nom + badge, variable=var)
+            chk.pack(anchor="w", pady=1)
+            variables.append((c, var, chk))
+
+        def filtrer(*_a):
+            texte = var_recherche.get().strip().lower()
+            for c, var, chk in variables:
+                if texte and texte not in c.nom.lower():
+                    chk.pack_forget()
+                else:
+                    chk.pack(anchor="w", pady=1)
+            canvas.update_idletasks()
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        var_recherche.trace_add("write", filtrer)
+
+        def tout_cocher():
+            etat = var_tout.get()
+            texte = var_recherche.get().strip().lower()
+            for c, var, chk in variables:
+                if texte and texte not in c.nom.lower():
+                    continue
+                var.set(etat)
+        ttk.Checkbutton(ligne_recherche,
+                        text="Tout sélectionner" if self.lang == "fr" else "Select all",
+                        variable=var_tout, command=tout_cocher).pack(side="left")
 
         def valider():
-            indices = liste.curselection()
-            if not indices:
+            cand_ids = [c.id for c, var, chk in variables if var.get()]
+            if not cand_ids:
                 messagebox.showwarning("Désigner", "Sélectionnez au moins une personne.")
                 return
-            cand_ids = [noeud.candidats[i].id for i in indices]
             noeud.designer_sans_vote(cand_ids)
             self._rafraichir_arbre()
             self._selectionner(noeud.id)
@@ -1339,6 +1488,33 @@ class SecretaryApp(tk.Tk):
         if not messagebox.askyesno("Terminer le vote", "Clôturer le vote pour « %s » ?" % noeud.nom):
             return
         complet = noeud.terminer_vote()
+
+        # Fusion automatique dans le poste d'origine si CE noeud est lui-même
+        # un tour de départage / second tour (comportement fidèle à l'app
+        # Android : le résultat final doit toujours être fusionné, jamais
+        # affiché comme un tour à part qui ferait disparaître les élu(e)s
+        # d'avant le départage).
+        if complet and noeud.tour_precedent_id:
+            origine = self.projet.trouver(noeud.tour_precedent_id)
+            if origine is not None:
+                tranche_info = getattr(self, "_tranches_roles_en_cours", {}).pop(noeud.id, None)
+                if tranche_info and tranche_info[0] == origine.id:
+                    origine.fusionner_resultat_tour_tranche(noeud, tranche_info[1])
+                elif origine.mode_roles and origine.roles:
+                    # repli si le lien en mémoire a été perdu (ex: app
+                    # relancée en pleine attente de départage) : on retrouve
+                    # la tranche concernée par correspondance de noms.
+                    tr = origine.tranche_a_departager()
+                    noms_tour = {c.nom for c in noeud.candidats}
+                    if tr and {c.nom for c in tr[2]} == noms_tour:
+                        origine.fusionner_resultat_tour_tranche(noeud, tr[0])
+                    else:
+                        origine.fusionner_resultat_tour(noeud)
+                else:
+                    origine.fusionner_resultat_tour(noeud)
+                self._selectionner(origine.id)
+                noeud = origine
+
         self._rafraichir_arbre()
         self._selectionner(noeud.id)
         storage.sauvegarde_auto(self.projet)
@@ -1365,6 +1541,40 @@ class SecretaryApp(tk.Tk):
                 "Il y a égalité entre %d candidat(s) pour les %d dernière(s) place(s).\n"
                 "Utilisez le bouton « Créer un tour de départage »."
                 % (len(noeud.egalite_en_attente), noeud.nombre_sieges - len(noeud.elus)))
+
+    def _clignoter_label(self, label, etat=[True]):
+        """Fait clignoter un Label rouge/transparent pour bien attirer
+        l'oeil du secrétaire sur une égalité à départager."""
+        couleurs = THEMES[self.theme]
+        def tic():
+            try:
+                if not label.winfo_exists():
+                    return
+                etat[0] = not etat[0]
+                label.configure(fg="#e53935" if etat[0] else couleurs["bg"])
+                self.after(500, tic)
+            except tk.TclError:
+                return
+        self.after(500, tic)
+
+    def _departager_tranche_roles(self, noeud, index_tranche, nom_role, candidats, places_restantes):
+        """Crée un tour de départage scopé à UNE tranche du mode rôles
+        (ex: juste « Mpanampy »), puis, une fois ce tour terminé, fusionne
+        son résultat dans cette tranche pour pouvoir enfin conclure le vote
+        à rôles multiples."""
+        tour = noeud.creer_tour_departage_tranche(candidats, places_restantes, nom_role)
+        tour.tour_precedent_id = noeud.id
+        tour._tranche_roles_index = index_tranche  # marqueur interne, pas sérialisé
+        parent = self._trouver_parent(noeud.id)
+        if parent is None:
+            self.projet.sections.append(tour)
+        else:
+            parent.enfants.append(tour)
+        self._tranches_roles_en_cours = getattr(self, "_tranches_roles_en_cours", {})
+        self._tranches_roles_en_cours[tour.id] = (noeud.id, index_tranche)
+        self._rafraichir_arbre()
+        self._selectionner(tour.id)
+        self._statut("Tour de départage créé pour « %s »." % nom_role)
 
     def _creer_departage(self, noeud):
         tour = noeud.creer_tour_departage()
@@ -1447,6 +1657,7 @@ class SecretaryApp(tk.Tk):
             return
         logo = CHEMIN_LOGO if os.path.exists(CHEMIN_LOGO) else None
         self.projection = FenetreProjection(self, logo_path=logo)
+        self.projection.titre_fn = lambda poste: self.projet.titre_section(poste)
         self._positionner_projection()
         self._statut("Écran de projection ouvert (%d écran(s) détecté(s), mode : %s)."
                      % (len(self.ecrans), self._libelle_mode_projection()))
@@ -1581,17 +1792,23 @@ class SecretaryApp(tk.Tk):
         if not messagebox.askyesno("Projeter les résultats",
                                     "Afficher les résultats de « %s » à l'assemblée ?" % noeud.nom):
             return
-        self.projection.afficher_resultats(noeud)
+        # On ne projette QUE ce qui est sous le noeud sélectionné (section,
+        # sous-section ou poste), jamais tout le projet — et jamais un
+        # tour de départage séparé : les résultats sont toujours fusionnés.
+        titre, sous_titre = self.projet.titre_section(noeud)
+        postes = self.projet.postes_resultat(noeud)
+        self.projection.afficher_resultats(postes, titre="Vote — " + titre, sous_titre=sous_titre)
         self._statut("Résultats de « %s » projetés." % noeud.nom)
 
     def projeter_bureau_complet(self):
-        postes_termines = [p for p in self.projet.tous_les_postes() if p.vote_termine]
+        postes_termines = [p for p in self.projet.postes_resultat() if p.vote_termine]
         if not postes_termines:
             messagebox.showinfo("Bureau élu", "Aucun poste n'a encore de résultat.")
             return
         if self.projection is None:
             self.ouvrir_ecran_projection()
-        self.projection.afficher_resultats(postes_termines)
+        titre = "Bureau élu" if self.lang == "fr" else "Elected board"
+        self.projection.afficher_resultats(postes_termines, titre=titre)
 
     # ================= recherche =================
     def _rechercher(self):
@@ -1713,6 +1930,121 @@ class SecretaryApp(tk.Tk):
                 "by Sitraka Nambinintsoa\n\n"
                 "Screen 1: secretary control.\n"
                 "Screen 2: projection for the assembly.")
+
+    def _afficher_tuto(self):
+        """Tutoriel intégré : explique l'utilisation complète de VoteMGR,
+        étape par étape, sans avoir à sortir de l'application."""
+        couleurs = THEMES[self.theme]
+        fenetre = tk.Toplevel(self)
+        fenetre.title("Tutoriel VoteMGR" if self.lang == "fr" else "VoteMGR tutorial")
+        fenetre.geometry("680x620")
+        fenetre.transient(self)
+        fenetre.configure(bg=couleurs["bg"])
+
+        cadre = ttk.Frame(fenetre, padding=14)
+        cadre.pack(fill="both", expand=True)
+        ttk.Label(cadre, text="🎓 " + ("Comment utiliser VoteMGR" if self.lang == "fr"
+                                        else "How to use VoteMGR"),
+                  font=("Segoe UI", 16, "bold")).pack(anchor="w", pady=(0, 10))
+
+        zone_scroll = ttk.Frame(cadre)
+        zone_scroll.pack(fill="both", expand=True)
+        canvas = tk.Canvas(zone_scroll, highlightthickness=0, bg=couleurs["bg"])
+        scrollbar = ttk.Scrollbar(zone_scroll, orient="vertical", command=canvas.yview)
+        conteneur = ttk.Frame(canvas)
+        conteneur.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=conteneur, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        if self.lang == "fr":
+            etapes = [
+                ("1. Créer la structure",
+                 "Dans l'arbre à gauche, utilisez « + Section » pour créer une section "
+                 "(ex : « Loholona »), puis « + Sous-section » si besoin (ex : un poste "
+                 "précis au sein de la section). Tout noeud peut à la fois contenir des "
+                 "sous-noeuds ET recevoir directement des candidats."),
+                ("2. Ajouter les candidats",
+                 "Sélectionnez le poste à pourvoir, puis ajoutez les candidats un par un, "
+                 "depuis la liste réutilisable des membres (cases à cocher + recherche), "
+                 "ou en important un fichier CSV/TXT/JSON."),
+                ("3. Réglages avant le vote",
+                 "Choisissez le nombre de sièges à pourvoir, activez éventuellement la "
+                 "« majorité absolue », ou configurez un « poste multiple » (un seul vote "
+                 "pour plusieurs postes classés, ex : Président puis Vice-Président)."),
+                ("4. Lancer et dépouiller le vote",
+                 "Cliquez sur « Lancer le vote », puis augmentez le score de chaque "
+                 "candidat au fur et à mesure du dépouillement des bulletins (+ / - ou en "
+                 "tapant directement le numéro du candidat au clavier). Les résultats se "
+                 "mettent à jour en direct sur l'écran de projection."),
+                ("5. Clôturer le vote",
+                 "Cliquez sur « Terminer le vote ». S'il y a égalité, un bandeau rouge "
+                 "clignotant apparaît : utilisez « Créer un tour de départage » pour "
+                 "redépartager uniquement les candidats à égalité. Une fois ce tour "
+                 "terminé, le résultat final (élus d'origine + départage) est fusionné "
+                 "automatiquement — il n'y a jamais besoin de le refaire à la main."),
+                ("6. Désigner sans vote",
+                 "Pour une nomination directe (sans organiser de vote), utilisez "
+                 "« Désigner sans vote » : cochez la ou les personnes concernées."),
+                ("7. Projeter sur l'écran 2",
+                 "« Projeter ce poste » affiche le vote en cours à l'assemblée. "
+                 "« Projeter les résultats » affiche uniquement les élu(e)s de la "
+                 "section/sous-section choisie (jamais tout le projet d'un coup, sauf "
+                 "avec « Bureau élu » dans le menu Écran)."),
+                ("8. Exporter en PDF",
+                 "Choisissez entre « Candidats élus uniquement » (résultat final, "
+                 "compact) ou « Déroulement complet du vote » (détail des voix, tours de "
+                 "départage inclus, pour l'archive officielle)."),
+                ("9. Sauvegarde",
+                 "Le projet est enregistré automatiquement à chaque action. Utilisez "
+                 "Fichier > Enregistrer sous… pour créer une copie nommée, et Fichier > "
+                 "Sauvegarde pour exporter une copie de secours."),
+            ]
+        else:
+            etapes = [
+                ("1. Build the structure",
+                 "In the tree on the left, use “+ Section” to create a section, then "
+                 "“+ Sub-section” if needed. Any node can both contain sub-nodes AND "
+                 "directly hold candidates."),
+                ("2. Add candidates",
+                 "Select the seat to fill, then add candidates one by one, from the "
+                 "reusable member list (checkboxes + search), or by importing a "
+                 "CSV/TXT/JSON file."),
+                ("3. Settings before the vote",
+                 "Choose the number of seats, optionally enable “absolute majority”, or "
+                 "configure “multiple seats” (one vote filling several ranked seats)."),
+                ("4. Run and tally the vote",
+                 "Click “Start the vote”, then increase each candidate's score as ballots "
+                 "are read out (+ / - or by typing the candidate's number directly). "
+                 "Results update live on the projection screen."),
+                ("5. Close the vote",
+                 "Click “Close the vote”. If there's a tie, a blinking red banner "
+                 "appears: use “Create a tie-break round” to re-vote only the tied "
+                 "candidates. Once that round is done, the final result (original "
+                 "winners + tie-break winners) is merged automatically."),
+                ("6. Designate without a vote",
+                 "For a direct appointment, use “Designate without a vote”: check the "
+                 "relevant people."),
+                ("7. Project on screen 2",
+                 "“Project this seat” shows the ongoing vote. “Project the results” shows "
+                 "only the chosen section/sub-section's winners."),
+                ("8. Export to PDF",
+                 "Choose “Elected candidates only” or “Full voting process”."),
+                ("9. Saving",
+                 "The project auto-saves on every action. Use File > Save As… for a named "
+                 "copy, and File > Backup for a spare export."),
+            ]
+
+        for titre_etape, texte in etapes:
+            bloc = ttk.Frame(conteneur, padding=(0, 8))
+            bloc.pack(fill="x")
+            ttk.Label(bloc, text=titre_etape, font=("Segoe UI", 12, "bold")).pack(anchor="w")
+            ttk.Label(bloc, text=texte, wraplength=600, justify="left").pack(anchor="w", pady=(2, 0))
+            ttk.Separator(conteneur, orient="horizontal").pack(fill="x", pady=4)
+
+        ttk.Button(cadre, text="Fermer" if self.lang == "fr" else "Close",
+                   command=fenetre.destroy).pack(anchor="e", pady=(10, 0))
 
     def _quitter(self):
         storage.sauvegarde_auto(self.projet)
